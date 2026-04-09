@@ -3,7 +3,12 @@ __pycache__/
 .env
 *.db
 .venv/
-workspace/
+# Workspace: ignore runtime files, keep config
+workspace/*
+!workspace/QWEN.md
+!workspace/.qwen/
+workspace/.qwen/*
+!workspace/.qwen/skills/
 data/
 *.ogg
 *.wav

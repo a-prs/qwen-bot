@@ -31,6 +31,7 @@ from db import (
 from qwen_runner import run_qwen, is_busy, queue_length
 from formatting import md_to_telegram_html, split_message
 from voice import transcribe_voice
+from scheduler import run_scheduler, _load_schedules
 
 # Logging
 logging.basicConfig(
@@ -619,7 +620,10 @@ async def _send_status(chat_id: int, edit_message=None):
         text += f"Current: <i>none</i>\n"
 
     voice_status = "on (Groq)" if config.GROQ_API_KEY else "off"
+    schedules = _load_schedules()
+    active_schedules = [s for s in schedules if s.get("enabled", True)]
     text += f"Voice: {voice_status}\n"
+    text += f"Scheduled tasks: {len(active_schedules)}\n"
     text += f"Busy: {'yes' if is_busy() else 'no'}"
 
     if edit_message:
@@ -639,12 +643,33 @@ async def setup_bot_commands():
     await bot.set_my_commands(commands)
 
 
+async def _scheduler_send_result(text: str, description: str):
+    """Callback for scheduler — send task result to Telegram."""
+    header = f"<b>[Scheduled] {md_to_telegram_html(description)}</b>\n\n"
+    html = header + md_to_telegram_html(text)
+    chunks = split_message(html)
+
+    for chunk in chunks:
+        try:
+            await bot.send_message(ADMIN_CHAT_ID, chunk, parse_mode=ParseMode.HTML)
+        except TelegramBadRequest:
+            await bot.send_message(ADMIN_CHAT_ID, f"[Scheduled] {description}\n\n{text[:3900]}")
+
+
 async def main():
     init_db()
     await setup_bot_commands()
     logger.info("QwenBot starting...")
     logger.info(f"Admin chat ID: {ADMIN_CHAT_ID}")
-    logger.info(f"Voice: {'Groq' if GROQ_API_KEY else 'disabled'}")
+    logger.info(f"Voice: {'Groq' if config.GROQ_API_KEY else 'disabled'}")
+
+    # Start scheduler in background
+    asyncio.create_task(run_scheduler(
+        run_qwen_fn=None,  # scheduler uses _execute_qwen directly
+        send_result_fn=_scheduler_send_result,
+    ))
+    logger.info("Scheduler started")
+
     await dp.start_polling(bot)
 
 
