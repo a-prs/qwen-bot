@@ -1,0 +1,26 @@
+[Unit]
+Description=QwenBot Telegram Assistant
+After=network.target
+
+[Service]
+Type=simple
+User=qwenbot
+WorkingDirectory=/opt/qwenbot/bot
+ExecStart=/opt/qwenbot/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/opt/qwenbot/.local/bin
+
+# Sandbox
+ProtectSystem=strict
+ReadWritePaths=/opt/qwenbot
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
