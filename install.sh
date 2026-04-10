@@ -1,13 +1,13 @@
 #!/bin/bash
-set -e
 
 # QwenClaw Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/a-prs/QwenClaw/main/install.sh | sudo bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/a-prs/QwenClaw/main/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
 
 INSTALL_DIR="/opt/qwenbot"
 REPO_URL="https://github.com/a-prs/QwenClaw.git"
 SERVICE_NAME="qwenbot"
 NODE_MIN_VERSION=18
+SELF_URL="https://raw.githubusercontent.com/a-prs/QwenClaw/main/install.sh"
 
 # Colors
 GREEN='\033[0;32m'
@@ -20,16 +20,21 @@ info()  { echo -e "${GREEN}[+]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 fail()  { echo -e "${RED}[x]${NC} $1"; exit 1; }
 
-# Fix stdin for curl|bash — all reads must come from terminal
-exec 3</dev/tty 2>/dev/null || true
-ask() {
-    local prompt="$1" var="$2"
-    if [[ -e /dev/tty ]]; then
-        read -p "$prompt" "$var" </dev/tty
-    else
-        read -p "$prompt" "$var"
-    fi
-}
+# ============================================================
+#  Self-relaunch: if piped (curl|bash), save to file and re-exec
+#  This fixes: stdin for read, process survives SSH disconnect
+# ============================================================
+if [ ! -t 0 ]; then
+    # We're being piped — stdin is not a terminal
+    SELF="/tmp/qwenclaw-install.sh"
+    cat > "$SELF" < /dev/stdin
+    chmod +x "$SELF"
+    echo -e "${GREEN}[+]${NC} Script downloaded. Launching installer..."
+    exec bash "$SELF" "$@"
+    exit 0
+fi
+
+set -e
 
 echo ""
 echo -e "${BOLD}======================================${NC}"
@@ -50,7 +55,7 @@ fi
 
 # --- Check root ---
 if [[ $EUID -ne 0 ]]; then
-    fail "Run as root: curl ... | sudo bash"
+    fail "Run as root: sudo bash $0"
 fi
 
 # --- Check OS ---
@@ -61,9 +66,10 @@ fi
 # --- Check if already installed ---
 if [[ -d "$INSTALL_DIR/bot" ]]; then
     warn "QwenClaw is already installed at $INSTALL_DIR"
-    ask "  Reinstall? (y/N): " reinstall
+    read -p "  Reinstall? (y/N): " reinstall
     if [[ "$reinstall" != "y" && "$reinstall" != "Y" ]]; then
-        info "Use --upgrade to update"
+        echo ""
+        info "To update: cd $INSTALL_DIR && git pull && systemctl restart $SERVICE_NAME"
         exit 0
     fi
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -75,7 +81,7 @@ fi
 # ============================================================
 info "Installing system packages..."
 apt-get update -qq || fail "apt-get update failed"
-apt-get install -y python3 python3-venv python3-pip git curl ca-certificates gnupg sudo || fail "Failed to install system packages"
+apt-get install -y python3 python3-venv python3-pip git curl ca-certificates gnupg sudo 2>&1 | tail -3
 info "System packages installed"
 
 
@@ -97,9 +103,8 @@ else
 fi
 
 if [[ "$need_node" == "true" ]]; then
-    info "Installing Node.js 20.x..."
+    info "Installing Node.js 20.x (this may take a minute)..."
 
-    # NodeSource setup
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
@@ -108,15 +113,10 @@ if [[ "$need_node" == "true" ]]; then
         > /etc/apt/sources.list.d/nodesource.list
 
     apt-get update -qq || fail "Failed to update after adding NodeSource"
-    apt-get install -y nodejs || fail "Failed to install Node.js"
+    apt-get install -y nodejs 2>&1 | tail -3 || fail "Failed to install Node.js"
 
-    # Verify
-    if ! command -v node &>/dev/null; then
-        fail "Node.js installation failed — 'node' not found in PATH"
-    fi
-    if ! command -v npm &>/dev/null; then
-        fail "npm not found after Node.js install"
-    fi
+    command -v node &>/dev/null || fail "Node.js not found after install"
+    command -v npm  &>/dev/null || fail "npm not found after install"
     info "Node.js $(node -v) installed"
 fi
 
@@ -128,21 +128,17 @@ if command -v qwen &>/dev/null; then
     info "Qwen Code CLI found"
 else
     info "Installing Qwen Code CLI via npm..."
-    npm install -g @qwen-code/qwen-code@latest || fail "Failed to install Qwen Code CLI"
+    npm install -g @qwen-code/qwen-code@latest 2>&1 | tail -3 || fail "Failed to install Qwen Code CLI"
 
-    # Verify
-    if command -v qwen &>/dev/null; then
-        info "Qwen Code CLI installed"
-    else
-        # npm global bin might not be in PATH
+    if ! command -v qwen &>/dev/null; then
         NPM_BIN=$(npm config get prefix)/bin
         if [[ -f "$NPM_BIN/qwen" ]]; then
             ln -sf "$NPM_BIN/qwen" /usr/local/bin/qwen
-            info "Qwen Code CLI installed (linked to /usr/local/bin/)"
         else
-            fail "Qwen Code CLI installation failed. Try manually: npm install -g @qwen-code/qwen-code@latest"
+            fail "Qwen Code CLI not found after install"
         fi
     fi
+    info "Qwen Code CLI installed"
 fi
 
 
@@ -153,7 +149,6 @@ if id -u qwenbot &>/dev/null; then
     info "User 'qwenbot' exists"
 else
     info "Creating user 'qwenbot'..."
-    # Don't use -m (no home skeleton) — git clone will populate the directory
     useradd -r -d "$INSTALL_DIR" -s /bin/bash qwenbot
 fi
 
@@ -164,27 +159,17 @@ fi
 info "Downloading QwenClaw..."
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
-    # Already a git repo — just pull
     cd "$INSTALL_DIR" && git pull
     info "Repository updated"
 else
-    # Fresh install — clone into install dir
-    # Remove existing dir if it exists (e.g. from useradd skeleton)
     if [[ -d "$INSTALL_DIR" ]]; then
-        # Preserve .env if it exists
-        if [[ -f "$INSTALL_DIR/.env" ]]; then
-            cp "$INSTALL_DIR/.env" /tmp/_qwenbot_env_backup
-        fi
+        [[ -f "$INSTALL_DIR/.env" ]] && cp "$INSTALL_DIR/.env" /tmp/_qwenbot_env_backup
         rm -rf "$INSTALL_DIR"
     fi
 
-    git clone "$REPO_URL" "$INSTALL_DIR" || fail "Failed to clone repository: $REPO_URL"
+    git clone "$REPO_URL" "$INSTALL_DIR" || fail "Failed to clone: $REPO_URL"
 
-    # Restore .env if backed up
-    if [[ -f /tmp/_qwenbot_env_backup ]]; then
-        mv /tmp/_qwenbot_env_backup "$INSTALL_DIR/.env"
-    fi
-
+    [[ -f /tmp/_qwenbot_env_backup ]] && mv /tmp/_qwenbot_env_backup "$INSTALL_DIR/.env"
     info "Repository cloned"
 fi
 
@@ -192,20 +177,40 @@ fi
 # ============================================================
 #  Step 6: Python venv + dependencies
 # ============================================================
-info "Setting up Python environment..."
-python3 -m venv "$INSTALL_DIR/.venv" || fail "Failed to create Python venv"
+info "Creating Python virtual environment..."
+python3 -m venv "$INSTALL_DIR/.venv" || fail "Failed to create venv"
 
 info "Upgrading pip..."
 "$INSTALL_DIR/.venv/bin/pip" install --upgrade pip 2>&1 | tail -1
 
-info "Installing Python dependencies..."
-"$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/bot/requirements.txt" 2>&1 | tail -5
-PIP_EXIT=${PIPESTATUS[0]}
-if [[ "$PIP_EXIT" -ne 0 ]]; then
-    warn "pip install failed (exit $PIP_EXIT). Retrying with verbose output..."
-    "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/bot/requirements.txt" -v
-    fail "Failed to install Python dependencies"
+info "Installing Python dependencies (this takes 1-2 minutes)..."
+echo "  Downloading: aiogram, httpx, python-dotenv..."
+
+# Run pip with progress, show last lines
+"$INSTALL_DIR/.venv/bin/pip" install \
+    --progress-bar on \
+    -r "$INSTALL_DIR/bot/requirements.txt" 2>&1 \
+    | while IFS= read -r line; do
+        # Show download/install progress
+        if [[ "$line" == *"Collecting"* ]]; then
+            echo -e "  ${GREEN}>>>${NC} $line"
+        elif [[ "$line" == *"Downloading"* ]]; then
+            echo -e "  ${GREEN}>>>${NC} $line"
+        elif [[ "$line" == *"Installing"* ]]; then
+            echo -e "  ${GREEN}>>>${NC} $line"
+        elif [[ "$line" == *"Successfully"* ]]; then
+            echo -e "  ${GREEN}>>>${NC} $line"
+        elif [[ "$line" == *"ERROR"* ]] || [[ "$line" == *"error"* ]]; then
+            echo -e "  ${RED}!!!${NC} $line"
+        fi
+    done
+
+# Verify installation
+if ! "$INSTALL_DIR/.venv/bin/python" -c "import aiogram" 2>/dev/null; then
+    warn "aiogram not found, retrying installation..."
+    "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/bot/requirements.txt" || fail "Failed to install Python dependencies"
 fi
+
 info "Python environment ready"
 
 
@@ -228,12 +233,11 @@ else
     echo -e "${BOLD}======================================${NC}"
     echo ""
 
-    # Telegram Bot Token
     echo "  Step 1: Telegram Bot Token"
     echo "  Get it from @BotFather in Telegram"
     echo ""
     while true; do
-        ask "  Bot token: " BOT_TOKEN
+        read -p "  Bot token: " BOT_TOKEN
         if [[ "$BOT_TOKEN" =~ ^[0-9]+:.+$ ]]; then
             break
         fi
@@ -242,12 +246,11 @@ else
 
     echo ""
 
-    # Admin Chat ID
     echo "  Step 2: Your Telegram Chat ID"
     echo "  Get it from @userinfobot in Telegram"
     echo ""
     while true; do
-        ask "  Chat ID: " CHAT_ID
+        read -p "  Chat ID: " CHAT_ID
         if [[ "$CHAT_ID" =~ ^[0-9]+$ ]]; then
             break
         fi
@@ -256,14 +259,12 @@ else
 
     echo ""
 
-    # Groq API Key (optional)
     echo "  Step 3 (optional): Groq API Key for voice messages"
     echo "  Free key: https://console.groq.com/keys"
     echo "  Press Enter to skip"
     echo ""
-    ask "  Groq API key: " GROQ_KEY
+    read -p "  Groq API key: " GROQ_KEY
 
-    # Write .env
     cat > "$INSTALL_DIR/.env" << ENVEOF
 TELEGRAM_BOT_TOKEN=$BOT_TOKEN
 TELEGRAM_CHAT_ID=$CHAT_ID
@@ -279,7 +280,6 @@ fi
 # ============================================================
 chown -R qwenbot:qwenbot "$INSTALL_DIR"
 
-# Allow qwenbot to restart its own service (for /update command)
 echo "qwenbot ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qwenbot" > /etc/sudoers.d/qwenbot
 chmod 440 /etc/sudoers.d/qwenbot
 info "Permissions configured"
@@ -300,21 +300,21 @@ echo "  2. Register/login at Qwen website if needed"
 echo "  3. If you end up in Qwen chat instead of OAuth,"
 echo "     come back and we'll try again"
 echo ""
-ask "  Press Enter to start..." _dummy
+read -p "  Press Enter to start..."
 
 echo ""
-sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth login' </dev/tty || true
+sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth login' || true
 
 echo ""
-ask "  Authorization OK? (y = yes / Enter = try again): " auth_ok
+read -p "  Authorization OK? (y = yes / Enter = try again): " auth_ok
 
 if [[ "$auth_ok" != "y" && "$auth_ok" != "Y" ]]; then
     info "Trying again..."
     echo ""
-    sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth login' </dev/tty || true
+    sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth login' || true
 
     echo ""
-    ask "  Now? (y/n): " auth_ok2
+    read -p "  Now? (y/n): " auth_ok2
     if [[ "$auth_ok2" != "y" && "$auth_ok2" != "Y" ]]; then
         warn "You can authorize later: sudo -u qwenbot qwen auth login"
     fi
@@ -362,3 +362,6 @@ else
     echo ""
     echo "  Fix the issue and run: systemctl start $SERVICE_NAME"
 fi
+
+# Cleanup
+rm -f /tmp/qwenclaw-install.sh 2>/dev/null
