@@ -158,13 +158,32 @@ async def _execute_qwen(
 
 
 def _parse_output(raw: str) -> Optional[dict]:
-    """Parse CLI JSON output — find line with {"result": ...}."""
+    """Parse Qwen CLI JSON output.
+
+    Qwen outputs a JSON array: [{type:system}, {type:assistant}, ..., {type:result}]
+    We need the last object where type=result and subtype=success.
+    """
+    # Try parsing as JSON array first (Qwen's native format)
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            for item in reversed(data):
+                if isinstance(item, dict) and item.get("type") == "result":
+                    return item
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: line-by-line (Claude-style output)
     for line in raw.strip().split("\n"):
         line = line.strip()
-        if line.startswith("{"):
+        if line.startswith("{") or line.startswith("["):
             try:
                 data = json.loads(line)
-                if "result" in data:
+                if isinstance(data, list):
+                    for item in reversed(data):
+                        if isinstance(item, dict) and item.get("type") == "result":
+                            return item
+                elif isinstance(data, dict) and "result" in data:
                     return data
             except json.JSONDecodeError:
                 continue

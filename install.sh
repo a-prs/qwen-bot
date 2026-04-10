@@ -165,6 +165,7 @@ fi
 info "Downloading QwenClaw..."
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
+    git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null
     cd "$INSTALL_DIR" && git pull
     info "Repository updated"
 else
