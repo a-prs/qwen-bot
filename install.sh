@@ -21,17 +21,15 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 fail()  { echo -e "${RED}[x]${NC} $1"; exit 1; }
 
 # ============================================================
-#  Self-relaunch: if piped (curl|bash), save to file and re-exec
+#  Self-relaunch: if piped (curl|bash), re-download and re-exec
 #  This fixes: stdin for read, process survives SSH disconnect
 # ============================================================
 if [ ! -t 0 ]; then
-    # We're being piped — stdin is not a terminal
     SELF="/tmp/qwenclaw-install.sh"
-    cat > "$SELF" < /dev/stdin
+    echo -e "${GREEN}[+]${NC} Piped mode detected. Re-downloading for interactive install..."
+    curl -fsSL "$SELF_URL" -o "$SELF"
     chmod +x "$SELF"
-    echo -e "${GREEN}[+]${NC} Script downloaded. Launching installer..."
     exec bash "$SELF" "$@"
-    exit 0
 fi
 
 set -e
