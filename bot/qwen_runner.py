@@ -100,7 +100,6 @@ async def _execute_qwen(
     """Run qwen CLI as subprocess, return parsed JSON result."""
 
     cmd = [QWEN_BIN, "-p", prompt, "--output-format", "json"]
-    cmd += ["--max-turns", str(max_turns or QWEN_MAX_TURNS)]
     cmd += ["--yolo"]
 
     if session_id:
