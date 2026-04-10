@@ -300,17 +300,17 @@ echo -e "${BOLD}======================================${NC}"
 echo -e "${BOLD}    Qwen Code Authorization${NC}"
 echo -e "${BOLD}======================================${NC}"
 echo ""
-echo "  This may take 2 attempts:"
+echo "  A link will appear below."
+echo "  Open it in your browser and authorize."
 echo ""
-echo "  1. A link will appear — open it in YOUR browser"
-echo "  2. Register/login at Qwen website if needed"
-echo "  3. If you end up in Qwen chat instead of OAuth,"
-echo "     come back and we'll try again"
+echo "  If this is your first time:"
+echo "    1. The link will ask you to register/login at Qwen"
+echo "    2. After login, come back and run auth again"
 echo ""
-read -p "  Press Enter to start..."
+read -p "  Press Enter to start authorization..."
 
 echo ""
-sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth login' || true
+sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth qwen-oauth' || true
 
 echo ""
 read -p "  Authorization OK? (y = yes / Enter = try again): " auth_ok
@@ -318,7 +318,7 @@ read -p "  Authorization OK? (y = yes / Enter = try again): " auth_ok
 if [[ "$auth_ok" != "y" && "$auth_ok" != "Y" ]]; then
     info "Trying again..."
     echo ""
-    sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth login' || true
+    sudo -u qwenbot bash -c 'export PATH="/usr/local/bin:/usr/bin:$PATH" && qwen auth qwen-oauth' || true
 
     echo ""
     read -p "  Now? (y/n): " auth_ok2

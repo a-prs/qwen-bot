@@ -101,6 +101,7 @@ async def _execute_qwen(
 
     cmd = [QWEN_BIN, "-p", prompt, "--output-format", "json"]
     cmd += ["--yolo"]
+    cmd += ["--auth-type", "qwen-oauth"]
 
     if session_id:
         cmd += ["--resume", session_id]
