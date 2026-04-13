@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -112,22 +113,42 @@ def build_sessions_keyboard(sessions: list[dict], page: int = 0, focus_id: str =
 
 # ==================== Text extraction ====================
 
-async def extract_text(message: Message) -> str | None:
-    """Extract text from message: plain text, voice, or caption."""
+async def extract_text(message: Message) -> tuple[str | None, str | None]:
+    """Extract text and optional image path from message.
+
+    Returns:
+        (text, image_path) — image_path is set when photo is attached
+    """
+    image_path = None
+
+    # Download photo if present
+    if message.photo:
+        photo = message.photo[-1]  # highest resolution
+        file = await bot.get_file(photo.file_id)
+        ext = "jpg"
+        save_path = config.WORK_DIR / f"image_{photo.file_id[-8:]}.{ext}"
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        await bot.download_file(file.file_path, destination=str(save_path))
+        image_path = str(save_path)
+        logger.info(f"Photo saved: {image_path}")
+
     if message.text:
-        return message.text
+        return message.text, image_path
 
     if message.voice or message.audio:
         voice_obj = message.voice or message.audio
         transcript = await transcribe_voice(voice_obj, bot)
         if transcript is None:
-            return None  # Groq not configured
-        return transcript
+            return None, None  # Groq not configured
+        return transcript, image_path
 
     if message.caption:
-        return message.caption
+        return message.caption, image_path
 
-    return None
+    if image_path:
+        return "\u041e\u043f\u0438\u0448\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435", image_path
+
+    return None, None
 
 
 # ==================== Commands ====================
@@ -538,27 +559,30 @@ async def handle_message(message: Message):
             )
         return
 
-    # 1. Extract text (plain text, voice, caption)
-    text = await extract_text(message)
+    # 1. Extract text and optional image
+    text, image_path = await extract_text(message)
 
     if text is None and (message.voice or message.audio):
         await message.reply(
-            "Voice messages require Groq API key.\n"
-            "Run /setup to add it (free, takes 1 minute).",
+            "\ud83c\udf99 \u0413\u043e\u043b\u043e\u0441\u043e\u0432\u044b\u0435 \u0442\u0440\u0435\u0431\u0443\u044e\u0442 Groq API \u043a\u043b\u044e\u0447.\n"
+            "\u0417\u0430\u043f\u0443\u0441\u0442\u0438 /setup (\u0431\u0435\u0441\u043f\u043b\u0430\u0442\u043d\u043e, 1 \u043c\u0438\u043d\u0443\u0442\u0430).",
         )
         return
 
     if not text:
-        await message.reply("Send text or voice message.")
+        await message.reply("\u041e\u0442\u043f\u0440\u0430\u0432\u044c \u0442\u0435\u043a\u0441\u0442, \u0433\u043e\u043b\u043e\u0441\u043e\u0432\u043e\u0435 \u0438\u043b\u0438 \u0444\u043e\u0442\u043e.")
         return
 
     # Show transcribed voice text
     if message.voice or message.audio:
         if text.startswith("["):
-            # Error message from voice.py
             await message.reply(text)
             return
-        await message.reply(f"<i>Voice:</i> {md_to_telegram_html(text)}", parse_mode=ParseMode.HTML)
+        await message.reply(f"<i>\ud83c\udf99 \u0413\u043e\u043b\u043e\u0441:</i> {md_to_telegram_html(text)}", parse_mode=ParseMode.HTML)
+
+    # Append image reference for Qwen vision
+    if image_path:
+        text = f"{text} @{image_path}"
 
     # 2. Route to session
     force_new = user_focus.get(message.chat.id) == "__force_new__"
@@ -614,6 +638,13 @@ async def handle_message(message: Message):
 
         # Save assistant response
         save_message("assistant", result_text or "", returned_session_id)
+
+        # Cleanup downloaded image
+        if image_path:
+            try:
+                Path(image_path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
         # Delete "working" status
         try:
