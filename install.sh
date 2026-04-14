@@ -288,7 +288,7 @@ fi
 # ============================================================
 chown -R qwenbot:qwenbot "$INSTALL_DIR"
 
-echo "qwenbot ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qwenbot" > /etc/sudoers.d/qwenbot
+echo "qwenbot ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/qwenbot
 chmod 440 /etc/sudoers.d/qwenbot
 info "Permissions configured"
 

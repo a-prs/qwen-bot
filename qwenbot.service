@@ -15,11 +15,6 @@ Environment=PYTHONUNBUFFERED=1
 Environment=HOME=/opt/qwenbot
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/opt/qwenbot/.local/bin
 
-# Sandbox
-ProtectSystem=strict
-ReadWritePaths=/opt/qwenbot
-ProtectHome=true
-PrivateTmp=true
 TimeoutStopSec=30
 
 [Install]
